@@ -74,6 +74,7 @@ type PushMessage struct {
 	ReceiverID              string  `json:"receiver_iden"`
 	ReceiverEmail           string  `json:"receiver_email"`
 	ReceiverEmailNormalized string  `json:"receiver_email_normalized"`
+	TargetDeviceID          string  `json:"target_device_iden"`
 }
 
 //PushList describes a list of push messages
