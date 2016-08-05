@@ -222,13 +222,13 @@ func (c *Client) GetUser() (u User, err error) {
 }
 
 //SendNote simply sends a note type push to all of the users devices
-func (c *Client) SendNote(title, body string) error {
-	err := c.SendNoteToTarget("all", "", title, body)
+func (c *Client) SendNote(title string, body string, deviceID string) error {
+	err := c.SendNoteToTarget("all", "", title, body, deviceID)
 	return err
 }
 
 //SendNoteToTarget sends a note type push to a specific device.
-func (c *Client) SendNoteToTarget(targetType, target, title, body string) error {
+func (c *Client) SendNoteToTarget(targetType string, target string, title string, body string, deviceID string) error {
 	var p = PushMessage{
 		Type:  "note",
 		Title: title,
@@ -248,6 +248,11 @@ func (c *Client) SendNoteToTarget(targetType, target, title, body string) error 
 		if targetType != "all" {
 			return errors.New("Invalid target type")
 		}
+	}
+
+	// If there's a device ID present, send the message from that
+	if deviceID != "" {
+		p.SourceDeviceID = deviceID
 	}
 
 	_, apiError, err := c.makeCall("POST", "pushes", p)
