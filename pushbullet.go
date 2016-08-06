@@ -14,6 +14,9 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"time"
+
+	"golang.org/x/net/websocket"
 )
 
 //Error (any non-200 error code) contain information on the kind of error that happened.
@@ -41,7 +44,7 @@ func (e *Error) String() string {
 
 //PushMessage describes a message to be sent via Pushbullet. Only one of the first 4 properties may be specified with a message being sent.
 type PushMessage struct {
-	ID string `json:"`
+	ID string `json:"iden"`
 
 	// Target specific properties
 	DeviceID   string `json:"device_iden"`
@@ -75,6 +78,9 @@ type PushMessage struct {
 	ReceiverEmail           string  `json:"receiver_email"`
 	ReceiverEmailNormalized string  `json:"receiver_email_normalized"`
 	TargetDeviceID          string  `json:"target_device_iden"`
+
+	// Properties of the event stream
+	Subtype string `json:"subtype"` // push, device
 }
 
 //PushList describes a list of push messages
@@ -197,14 +203,16 @@ type Client struct {
 	APIKey     string
 	BaseURL    string
 	HTTPClient *http.Client
+	myID       string
 }
 
 //ClientWithKey returns a pushbullet.Client pointer with API key.
-func ClientWithKey(key string) *Client {
+func ClientWithKey(key string, deviceID string) *Client {
 	return &Client{
 		APIKey:     key,
 		BaseURL:    "https://api.pushbullet.com/v2/",
 		HTTPClient: &http.Client{},
+		myID:       deviceID,
 	}
 }
 
@@ -557,9 +565,9 @@ func (c *Client) UpdatePreferences(preferences Preferences) error {
 }
 
 //GetPushHistory gets pushes modified after the provided timestamp
-func (c *Client) GetPushHistory(modifiedAfter float32) ([]PushMessage, error) {
+func (c *Client) GetPushHistory(modifiedAfter time.Time) ([]PushMessage, error) {
 	var pushList PushList
-	responseBody, apiError, err := c.makeCall("GET", "pushes?modified_after="+strconv.FormatFloat(float64(modifiedAfter), 'f', 4, 32), nil)
+	responseBody, apiError, err := c.makeCall("GET", "pushes?modified_after="+strconv.FormatFloat(float64(modifiedAfter.Unix()), 'f', 4, 32), nil)
 	if err != nil {
 		log.Println("Error getting push history: ", apiError, err)
 		return pushList.Pushes, err
@@ -722,4 +730,48 @@ func uploadFileByPath(authorization Authorization, file string) (err error) {
 	}
 
 	return err
+}
+
+//ListenForPushes Fires callback for each message since a time
+func (c *Client) ListenForPushes(since time.Time, callback func(PushMessage)) error {
+	// Dial the stream
+	ws, err := websocket.Dial("wss://stream.pushbullet.com/websocket/"+c.APIKey, "", "http://localhost/")
+	if err != nil {
+		return err
+	}
+
+	var raw = make([]byte, 4096)
+	var n int
+
+	pushes, err := c.GetPushHistory(since)
+	if err != nil {
+		return err
+	}
+
+	for _, push := range pushes {
+		if push.TargetDeviceID != c.myID {
+			continue
+		}
+		callback(push)
+	}
+
+	for {
+		// Read a message
+		if n, err = ws.Read(raw); err != nil {
+			return err
+		}
+
+		var message PushMessage
+		//log.Println(string(raw[0:n]))
+		err = json.Unmarshal(raw[0:n], &message)
+		if err != nil {
+			log.Println("Error parsing json", err)
+			continue
+		}
+		if message.Type == "nop" {
+			continue
+		}
+		callback(message)
+	}
+	return nil
 }
