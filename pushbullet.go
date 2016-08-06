@@ -567,7 +567,7 @@ func (c *Client) UpdatePreferences(preferences Preferences) error {
 //GetPushHistory gets pushes modified after the provided timestamp
 func (c *Client) GetPushHistory(modifiedAfter time.Time) ([]PushMessage, error) {
 	var pushList PushList
-	responseBody, apiError, err := c.makeCall("GET", "pushes?modified_after="+strconv.FormatFloat(float64(modifiedAfter.Unix()), 'f', 4, 32), nil)
+	responseBody, apiError, err := c.makeCall("GET", "pushes?limit=500&modified_after="+strconv.FormatInt(modifiedAfter.Unix(), 10), nil)
 	if err != nil {
 		log.Println("Error getting push history: ", apiError, err)
 		return pushList.Pushes, err
@@ -732,17 +732,7 @@ func uploadFileByPath(authorization Authorization, file string) (err error) {
 	return err
 }
 
-//ListenForPushes Fires callback for each message since a time
-func (c *Client) ListenForPushes(since time.Time, callback func(PushMessage)) error {
-	// Dial the stream
-	ws, err := websocket.Dial("wss://stream.pushbullet.com/websocket/"+c.APIKey, "", "http://localhost/")
-	if err != nil {
-		return err
-	}
-
-	var raw = make([]byte, 4096)
-	var n int
-
+func (c *Client) callbackMsg(since time.Time, callback func(PushMessage)) error {
 	pushes, err := c.GetPushHistory(since)
 	if err != nil {
 		return err
@@ -754,6 +744,26 @@ func (c *Client) ListenForPushes(since time.Time, callback func(PushMessage)) er
 		}
 		callback(push)
 	}
+	return nil
+}
+
+//ListenForPushes Fires callback for each message since a time
+func (c *Client) ListenForPushes(since time.Time, callback func(PushMessage)) error {
+	// Dial the stream
+	ws, err := websocket.Dial("wss://stream.pushbullet.com/websocket/"+c.APIKey, "", "http://localhost/")
+	if err != nil {
+		return err
+	}
+
+	var raw = make([]byte, 4096)
+	var n int
+
+	err = c.callbackMsg(since, callback)
+	if err != nil {
+		return err
+	}
+	lastMsg := time.Now()
+	log.Println("Caught up, waiting for new messages")
 
 	for {
 		// Read a message
@@ -771,7 +781,13 @@ func (c *Client) ListenForPushes(since time.Time, callback func(PushMessage)) er
 		if message.Type == "nop" {
 			continue
 		}
-		callback(message)
+		if message.Subtype == "push" {
+			err = c.callbackMsg(lastMsg, callback)
+			if err != nil {
+				return err
+			}
+			lastMsg = time.Now()
+		}
 	}
 	return nil
 }
